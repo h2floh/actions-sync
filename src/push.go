@@ -3,6 +3,8 @@ package src
 import (
 	"context"
 	"fmt"
+	nethttp "net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -20,6 +22,7 @@ import (
 type PushOnlyFlags struct {
 	BaseURL, Token string
 	DisableGitAuth bool
+	UseGitHubAPI   bool
 }
 
 type PushFlags struct {
@@ -36,6 +39,7 @@ func (f *PushOnlyFlags) Init(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.BaseURL, "destination-url", "", "URL of GHES instance")
 	cmd.Flags().StringVar(&f.Token, "destination-token", "", "Token to access API on GHES instance")
 	cmd.Flags().BoolVar(&f.DisableGitAuth, "disable-push-git-auth", false, "Disables git authentication whilst pushing")
+	cmd.Flags().BoolVar(&f.UseGitHubAPI, "use-github-api", false, "Uses GitHub API path scheme (e.g. /user) instead of GHES API path scheme (e.g. /api/v3/user)")
 }
 
 func (f *PushFlags) Validate() Validations {
@@ -56,7 +60,9 @@ func (f *PushOnlyFlags) Validate() Validations {
 func Push(ctx context.Context, flags *PushFlags) error {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: flags.Token})
 	tc := oauth2.NewClient(ctx, ts)
-	ghClient, err := github.NewEnterpriseClient(flags.BaseURL, flags.BaseURL, tc)
+
+	ghClient, err := getGitClient(flags, tc)
+
 	if err != nil {
 		return errors.Wrap(err, "error creating enterprise client")
 	}
@@ -215,4 +221,17 @@ func syncWithCachedRepository(ctx context.Context, flags *PushFlags, ghRepo *git
 		return nil
 	}
 	return errors.Wrapf(err, "failed to push to repo: %s", ghRepo.GetCloneURL())
+}
+
+// Returns modified GitHub Client or GitHub Enterprise Client based on API type flag UseGitHubAPI
+func getGitClient(flags *PushFlags, tc *nethttp.Client) (*github.Client, error) {
+	if flags.UseGitHubAPI {
+		ghClient := github.NewClient(tc)
+		baseEndpoint, err := url.Parse(flags.BaseURL)
+		ghClient.BaseURL = baseEndpoint
+
+		return ghClient, err
+	} else {
+		return github.NewEnterpriseClient(flags.BaseURL, flags.BaseURL, tc)
+	}
 }
